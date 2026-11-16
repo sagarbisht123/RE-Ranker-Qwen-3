@@ -1,0 +1,107 @@
+# PDF Reranker (Qwen3-Reranker, 4-bit)
+
+A small Gradio app that ranks a set of PDFs by how relevant they are to a text query. It uses [Qwen3-Reranker](https://huggingface.co/Qwen/Qwen3-Reranker-4B) loaded in 4-bit, and it reads only the **first few pages** of each PDF, so ranking stays fast even for long documents.
+
+Upload some PDFs, type what you are looking for, and get a ranked table with a relevance score, the file name and a short text preview.
+
+## Features
+
+- Upload many PDFs at once and rank them against one query
+- Relevance score between 0 and 1 for every PDF
+- Runs the reranker in 4-bit (NF4) with `bitsandbytes`, so the 4B model fits on a modest GPU
+- Editable task instruction (Advanced section) to steer the reranker
+- Adjustable "Top N" number of results
+- PDFs without extractable text are reported as skipped instead of failing the whole run
+
+## How it works
+
+1. **Extract text.** PyMuPDF reads the first `NUM_PAGES` pages (default 2) of each PDF and cleans the whitespace.
+2. **Build a prompt.** Each PDF becomes one `(instruction, query, document)` input in the format Qwen3-Reranker expects. It is truncated to `MAX_LENGTH` tokens (default 3072).
+3. **Score.** The model is asked whether the document meets the query. The app reads the logits of the answers "yes" and "no" at the last position and turns them into a probability of "yes". That probability is the score.
+4. **Rank.** PDFs are sorted by score, highest first, and the top N are shown.
+
+To reduce padding waste, documents are sorted by length before batching, and the scores are put back in the original order afterwards.
+
+## Requirements
+
+- Python 3.10 or newer
+- A CUDA-capable NVIDIA GPU (4-bit loading with `bitsandbytes` is designed for GPUs)
+- Internet access on the first run, to download the model from Hugging Face
+
+Python packages (see `requirements.txt`):
+
+```
+torch
+transformers>=4.51
+accelerate
+bitsandbytes
+gradio
+pymupdf
+```
+
+## Installation
+
+```bash
+git clone <your-repo-url>
+cd <your-repo-folder>
+
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+pip install -r requirements.txt
+```
+
+If `torch` installs a CPU-only build on your machine, install the CUDA build that matches your driver from the [PyTorch website](https://pytorch.org/get-started/locally/) first, then run the command above.
+
+## Usage
+
+```bash
+python app.py
+```
+
+The model is loaded once at start-up (the first run downloads it, so it takes a while). When the app is ready, Gradio prints a local address, usually `http://127.0.0.1:7860`. Open it in your browser, then:
+
+1. Upload one or more PDFs.
+2. Enter your query.
+3. Choose how many results you want (Top N).
+4. Optionally open **Advanced** and change the task instruction.
+5. Click **Rerank**.
+
+The result table has four columns: **Rank**, **Score**, **File** and **Text preview** (the first 400 characters of the text that was used). A status line above the table says how many PDFs were ranked and lists any that were skipped.
+
+## Configuration
+
+All settings are constants at the top of `app.py`:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `MODEL_ID` | `Qwen/Qwen3-Reranker-4B` | Model to load. `Qwen/Qwen3-Reranker-0.6B` is lighter and `Qwen/Qwen3-Reranker-8B` is larger. |
+| `NUM_PAGES` | `2` | How many pages from the start of each PDF are used. |
+| `MAX_LENGTH` | `3072` | Maximum number of tokens for each query + document pair. Longer text is truncated. |
+| `BATCH_SIZE` | `1` | Pairs scored at once. Lower it (or keep it at 1) if you run out of GPU memory, raise it if you have spare memory. |
+| `DEFAULT_INSTRUCTION` | `Given a web search query, retrieve relevant passages that answer the query` | Default task instruction. It can also be changed in the UI. |
+
+Tip: a task-specific instruction often helps. For example, `Given a research topic, find papers that study this topic` can work better than the default when you are ranking papers.
+
+## Limitations
+
+- **Only the first pages are used.** A PDF whose relevant content appears later in the document can be ranked too low. Increase `NUM_PAGES` if needed, but keep `MAX_LENGTH` in mind, because everything beyond it is cut off.
+- **Scanned PDFs are not supported.** If a PDF has no extractable text in the first pages (for example, it is made of images), it is skipped. Run OCR on it first.
+- **Scores are relative.** Use the scores to compare PDFs for the same query. A score for one query should not be compared with a score for another query.
+- **Needs a GPU.** 4-bit quantization through `bitsandbytes` is meant for NVIDIA GPUs.
+
+## Project structure
+
+```
+.
+├── app.py              # model loading, scoring, PDF extraction and Gradio UI
+├── requirements.txt
+└── README.md
+```
+
+## Acknowledgements
+
+- [Qwen3-Reranker](https://huggingface.co/Qwen/Qwen3-Reranker-4B) by the Qwen team
+- [PyMuPDF](https://pymupdf.readthedocs.io/) for PDF text extraction
+- [Gradio](https://www.gradio.app/) for the web interface
+- [Hugging Face Transformers](https://github.com/huggingface/transformers) and [bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) for model loading and 4-bit quantization
